@@ -15,7 +15,10 @@ from django.urls import include, path
 from health_check.views import HealthCheckView
 from redis.asyncio import Redis as RedisClient
 
+from app import api
+
 urlpatterns = [
+    path("api/media/", api.media_list, name="api_media_list"),
     path("", include("app.urls")),
     path("", include("integrations.urls")),
     path("", include("users.urls")),
