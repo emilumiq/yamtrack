@@ -123,8 +123,8 @@ def media_list(request):
         max_progress = None
         if media_type == MediaTypes.MOVIE.value:
             max_progress = 1
-        elif media_type in (MediaTypes.TV.value,):
-            # Count released episodes across seasons
+        elif media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+            # Count released episodes via Events
             from events.models import Event
             from app.models import MediaTypes as MT
             max_progress = Event.objects.filter(
@@ -134,9 +134,6 @@ def media_list(request):
                 item__season_number__gt=0,
                 content_number__isnull=False,
             ).count() or None
-        elif hasattr(media, 'seasons'):
-            # Anime with seasons
-            max_progress = media.seasons.count() or None
 
         results.append(
             {
