@@ -113,7 +113,7 @@ def media_list(request):
     model = apps.get_model(app_label="app", model_name=media_type)
 
     queryset = (
-        model.objects.filter(user=user, status_q)
+        model.objects.filter(status_q, user=user)
         .select_related("item")
         .order_by("-progressed_at")
     )
