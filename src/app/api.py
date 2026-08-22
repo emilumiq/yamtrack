@@ -113,7 +113,7 @@ def media_list(request):
     queryset = (
         model.objects.filter(status_q, user=user)
         .select_related("item")
-        .order_by("-progressed_at")
+        .order_by("-created_at")
     )
 
     items = queryset[offset : offset + limit]
@@ -123,7 +123,7 @@ def media_list(request):
             {
                 "progress": media.progress,
                 "progressed_at": (
-                    media.progressed_at.isoformat() if media.progressed_at else None
+                    media.progressed_at.isoformat() if hasattr(media, 'progressed_at') and media.progressed_at else None
                 ),
                 "item": {
                     "media_id": media.item.media_id,
