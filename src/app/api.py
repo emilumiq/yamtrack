@@ -119,12 +119,33 @@ def media_list(request):
     items = queryset[offset : offset + limit]
     results = []
     for media in items:
+        # Calculate max_progress (total episodes / items)
+        max_progress = None
+        if media_type == MediaTypes.MOVIE.value:
+            max_progress = 1
+        elif media_type in (MediaTypes.TV.value,):
+            # Count released episodes across seasons
+            from events.models import Event
+            from app.models import MediaTypes as MT
+            max_progress = Event.objects.filter(
+                item__media_id=media.item.media_id,
+                item__source=media.item.source,
+                item__media_type=MT.SEASON.value,
+                item__season_number__gt=0,
+                content_number__isnull=False,
+            ).count() or None
+        elif hasattr(media, 'seasons'):
+            # Anime with seasons
+            max_progress = media.seasons.count() or None
+
         results.append(
             {
                 "score": (
                     float(media.score) if media.score is not None else None
                 ),
+                "status": media.status,
                 "progress": media.progress,
+                "max_progress": max_progress,
                 "progressed_at": (
                     media.progressed_at.isoformat() if hasattr(media, 'progressed_at') and media.progressed_at else None
                 ),
