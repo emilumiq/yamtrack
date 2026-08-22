@@ -7,7 +7,6 @@ import logging
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
-from django.contrib.auth.decorators import login_not_required
 from django.db.models import Q
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
@@ -57,7 +56,6 @@ def _authenticate(request):
         return None
 
 
-@login_not_required
 @require_GET
 def media_list(request):
     """Return a paginated list of media items for the authenticated user.
@@ -138,3 +136,7 @@ def media_list(request):
         )
 
     return JsonResponse({"results": results})
+
+
+# Exempt from LoginRequiredMiddleware (token auth handled inside the view)
+media_list.login_required = False

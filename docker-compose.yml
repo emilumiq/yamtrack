@@ -18,6 +18,7 @@ services:
     container_name: yamtrack-redis
     image: redis:8-alpine
     restart: unless-stopped
+    command: redis-server --save "" --appendonly no
     volumes:
       - redis_data:/data
 
