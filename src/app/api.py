@@ -121,6 +121,9 @@ def media_list(request):
     for media in items:
         results.append(
             {
+                "score": (
+                    float(media.score) if media.score is not None else None
+                ),
                 "progress": media.progress,
                 "progressed_at": (
                     media.progressed_at.isoformat() if hasattr(media, 'progressed_at') and media.progressed_at else None
