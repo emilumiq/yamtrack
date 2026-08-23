@@ -8,8 +8,7 @@ import logging
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.db.models import Q
-from django.http import JsonResponse
-from django.views.decorators.http import require_GET
+from django.http import HttpResponse, JsonResponse
 
 from app.models import MediaTypes
 
@@ -56,7 +55,15 @@ def _authenticate(request):
         return None
 
 
-@require_GET
+def _cors_headers(response):
+    """Add CORS headers for cross-origin requests."""
+    response["Access-Control-Allow-Origin"] = "*"
+    response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+    response["Access-Control-Max-Age"] = "86400"
+    return response
+
+
 def media_list(request):
     """Return a paginated list of media items for the authenticated user.
 
@@ -83,9 +90,13 @@ def media_list(request):
             ]
         }
     """
+    # Handle CORS preflight
+    if request.method == "OPTIONS":
+        return _cors_headers(HttpResponse(status=204))
+
     user = _authenticate(request)
     if user is None:
-        return JsonResponse({"detail": "Invalid or missing token."}, status=401)
+        return _cors_headers(JsonResponse({"detail": "Invalid or missing token."}, status=401))
 
     media_type = request.GET.get("media_type", "tv")
     status_raw = request.GET.get("status", "")
@@ -95,10 +106,10 @@ def media_list(request):
     # Validate media_type
     valid_types = [t[0] for t in MediaTypes.choices]
     if media_type not in valid_types:
-        return JsonResponse(
+        return _cors_headers(JsonResponse(
             {"detail": f"Invalid media_type. Choose from: {', '.join(valid_types)}"},
             status=400,
-        )
+        ))
 
     # Build status filter
     status_filter = STATUS_MAP.get(status_raw, status_raw)
@@ -156,7 +167,7 @@ def media_list(request):
             }
         )
 
-    return JsonResponse({"results": results})
+    return _cors_headers(JsonResponse({"results": results}))
 
 
 # Exempt from LoginRequiredMiddleware (token auth handled inside the view)
