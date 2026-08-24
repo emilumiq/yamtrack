@@ -210,7 +210,17 @@ def media_list(request):
                 "max_progress": max_progress,
                 "progressed_at": (
                     media.progressed_at.isoformat()
-                    if hasattr(media, "progressed_at") and media.progressed_at
+                    if media.progressed_at
+                    and (
+                        # TV/Season: progressed_at is a @property from episode
+                        # dates — always include if set.
+                        "progressed_at"
+                        not in {f.name for f in media._meta.concrete_fields}
+                        # Movie/Anime/etc: MonitorField auto-sets on save.
+                        # Only include if user actually entered dates.
+                        or getattr(media, "start_date", None)
+                        or getattr(media, "end_date", None)
+                    )
                     else None
                 ),
                 "item": {

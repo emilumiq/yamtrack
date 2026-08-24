@@ -746,6 +746,8 @@ class MediaManagerTests(TestCase):
         anime1 = self.anime
         anime1.max_progress = 20
         anime1.progress = 13
+        anime1.progressed_at = timezone.now() - timedelta(days=10)
+        anime1.save(update_fields=["progressed_at"])
         anime1.next_event = Event.objects.filter(item=self.anime_item).first()
         anime_list.append(anime1)
 
@@ -767,6 +769,8 @@ class MediaManagerTests(TestCase):
         )
         anime2.max_progress = 100
         anime2.next_event = None
+        anime2.progressed_at = timezone.now() - timedelta(days=5)
+        anime2.save(update_fields=["progressed_at"])
         anime_list.append(anime2)
 
         # Anime with next event and medium completion
@@ -786,6 +790,8 @@ class MediaManagerTests(TestCase):
             progress=30,
         )
         anime3.max_progress = 50
+        anime3.progressed_at = timezone.now() - timedelta(days=1)
+        anime3.save(update_fields=["progressed_at"])
         anime3.next_event = Event.objects.create(
             item=anime_item3,
             content_number=31,

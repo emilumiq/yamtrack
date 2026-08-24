@@ -36,7 +36,8 @@ class MediaListAPITests(TestCase):
 
     def _set_progressed_at(self, media, value):
         media.progressed_at = value
-        media.save(update_fields=["progressed_at"])
+        media.end_date = value
+        media.save(update_fields=["progressed_at", "end_date"])
 
     def _get(self, **params):
         return self.client.get(

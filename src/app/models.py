@@ -22,7 +22,6 @@ from django.db.models import (
 from django.db.models.functions import RowNumber
 from django.utils import timezone
 from model_utils import FieldTracker
-from model_utils.fields import MonitorField
 from simple_history.models import HistoricalRecords
 from simple_history.utils import bulk_create_with_history, bulk_update_with_history
 
@@ -851,7 +850,7 @@ class Media(models.Model):
         ],
     )
     progress = models.PositiveIntegerField(default=0)
-    progressed_at = MonitorField(monitor="progress")
+    progressed_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=Status,
