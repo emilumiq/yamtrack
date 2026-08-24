@@ -7,10 +7,13 @@ import logging
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
-from django.db.models import Q
+from django.db.models import F, Max, Q
+from django.db.models.functions import Coalesce
 from django.http import HttpResponse, JsonResponse
 
 from app.models import MediaTypes
+from app.providers import services as provider_services
+from events.models import Event
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,25 @@ STATUS_MAP = {
     "4": "Paused",
     "5": "Dropped",
 }
+
+
+def _max_progress_from_metadata(item):
+    """Return the total unit count from provider metadata.
+
+    Fallback for sources whose released episodes are not tracked by
+    the events app (e.g. MAL anime), where ``max_progress`` comes from
+    the provider metadata instead.
+    """
+    try:
+        metadata = provider_services.get_media_metadata(
+            item.media_type,
+            item.media_id,
+            item.source,
+        )
+    except Exception:
+        logger.debug("Metadata lookup failed for %s", item, exc_info=True)
+        return None
+    return metadata.get("max_progress") or None
 
 
 def _authenticate(request):
@@ -121,10 +143,24 @@ def media_list(request):
     # Resolve the correct Django model for this media type
     model = apps.get_model(app_label="app", model_name=media_type)
 
+    # Sort by last activity: the watch date when available, otherwise the
+    # date the entry was added. Entries without any dates must never float
+    # to the top regardless of database NULL ordering.
+    if any(
+        field.attname == "progressed_at" for field in model._meta.concrete_fields
+    ):
+        activity = Coalesce("progressed_at", "created_at")
+    elif media_type == MediaTypes.TV.value:
+        # TV/Season have no progressed_at column, derive it from episodes
+        activity = Coalesce(Max("seasons__episodes__end_date"), "created_at")
+    else:
+        activity = Coalesce(Max("episodes__end_date"), "created_at")
+
     queryset = (
         model.objects.filter(status_q, user=user)
         .select_related("item")
-        .order_by("-created_at")
+        .annotate(_activity=activity)
+        .order_by(F("_activity").desc(), "-created_at")
     )
 
     items = queryset[offset : offset + limit]
@@ -135,16 +171,18 @@ def media_list(request):
         if media_type == MediaTypes.MOVIE.value:
             max_progress = 1
         elif media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-            # Count released episodes via Events
-            from events.models import Event
-            from app.models import MediaTypes as MT
-            max_progress = Event.objects.filter(
-                item__media_id=media.item.media_id,
-                item__source=media.item.source,
-                item__media_type=MT.SEASON.value,
-                item__season_number__gt=0,
-                content_number__isnull=False,
-            ).count() or None
+            # Prefer released-episode counts from Events, fall back to
+            # provider metadata (e.g. MAL num_episodes) when unavailable
+            max_progress = (
+                Event.objects.filter(
+                    item__media_id=media.item.media_id,
+                    item__source=media.item.source,
+                    item__media_type=MediaTypes.SEASON.value,
+                    item__season_number__gt=0,
+                    content_number__isnull=False,
+                ).count()
+                or _max_progress_from_metadata(media.item)
+            )
 
         results.append(
             {
