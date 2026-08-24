@@ -106,6 +106,19 @@ def _cors_headers(response):
     return response
 
 
+def _get_progressed_at(media):
+    """Return the relevant watch date for a media instance.
+
+    TV/Season: progressed_at is a @property computed from episode dates.
+    Movie/Anime/etc: use the user-entered end_date (or start_date) instead
+    of the stale MonitorField progressed_at value.
+    """
+    concrete = {f.name for f in media._meta.concrete_fields}
+    if "progressed_at" not in concrete:
+        return media.progressed_at
+    return getattr(media, "end_date", None) or getattr(media, "start_date", None)
+
+
 def media_list(request):
     """Return a paginated list of media items for the authenticated user.
 
@@ -208,21 +221,7 @@ def media_list(request):
                 "status": media.status,
                 "progress": media.progress,
                 "max_progress": max_progress,
-                "progressed_at": (
-                    media.progressed_at.isoformat()
-                    if media.progressed_at
-                    and (
-                        # TV/Season: progressed_at is a @property from episode
-                        # dates — always include if set.
-                        "progressed_at"
-                        not in {f.name for f in media._meta.concrete_fields}
-                        # Movie/Anime/etc: MonitorField auto-sets on save.
-                        # Only include if user actually entered dates.
-                        or getattr(media, "start_date", None)
-                        or getattr(media, "end_date", None)
-                    )
-                    else None
-                ),
+                "progressed_at": _get_progressed_at(media),
                 "item": {
                     "media_id": media.item.media_id,
                     "source": media.item.source,
