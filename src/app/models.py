@@ -1064,6 +1064,32 @@ class TV(Media):
         ]
         return max(dates) if dates else None
 
+    def set_watch_dates(self, start_date, end_date):
+        """Distribute watch dates across all watched episodes of all seasons."""
+        eps = []
+        for season in self.seasons.select_related("item"):
+            if season.item.season_number == 0:
+                continue
+            eps.extend(season.get_watched_episodes())
+        eps.sort(key=lambda e: (e.item.season_number, e.item.episode_number))
+        if not eps:
+            return
+        if end_date is None:
+            for ep in eps:
+                ep.end_date = None
+            bulk_update_with_history(eps, Episode, ["end_date"])
+            return
+        start = start_date or end_date
+        n = len(eps)
+        span = (end_date - start).total_seconds()
+        for i, ep in enumerate(eps):
+            ep.end_date = (
+                start + timezone.timedelta(seconds=span * i / (n - 1))
+                if n > 1
+                else end_date
+            )
+        bulk_update_with_history(eps, Episode, ["end_date"])
+
     def _completed(self):
         """Create remaining seasons and episodes for a TV show."""
         tv_metadata = providers.services.get_media_metadata(
@@ -1621,6 +1647,88 @@ class Season(Media):
             episode_number,
             remaining_count,
         )
+
+    def get_watched_episodes(self):
+        """Return the latest watched Episode instance per episode number."""
+        latest = {}
+        for ep in self.episodes.select_related("item").order_by(
+            "item__episode_number",
+            "-end_date",
+            "-created_at",
+        ):
+            num = ep.item.episode_number
+            if num not in latest:
+                latest[num] = ep
+        return [latest[num] for num in sorted(latest)]
+
+    def sync_progress(self, target, watched_at=None):
+        """Align watched episodes with the target episode number."""
+        target = max(int(target), 0) if target is not None else 0
+        season_metadata = providers.services.get_media_metadata(
+            MediaTypes.SEASON.value,
+            self.item.media_id,
+            self.item.source,
+            [self.item.season_number],
+        )
+        numbers = [e["episode_number"] for e in season_metadata["episodes"]]
+        desired = set(numbers[:target])
+        watched = {ep.item.episode_number for ep in self.get_watched_episodes()}
+        date = watched_at or timezone.now().replace(second=0, microsecond=0)
+
+        for num in sorted(desired - watched):
+            self.watch(num, date)
+        for num in sorted(watched - desired, reverse=True):
+            self.unwatch(num)
+
+    def sync_episode_state(self, desired):
+        """Sync episode watch state from the track modal.
+
+        ``desired`` maps episode_number -> end_date | None | False.
+        False means unwatched; None means watched with no date.
+        Numbers absent from the mapping are left untouched.
+        """
+        watched = {ep.item.episode_number: ep for ep in self.get_watched_episodes()}
+        to_update = []
+
+        for num, state in desired.items():
+            num = int(num)
+            if state is False:
+                if num in watched:
+                    self.unwatch(num)
+                continue
+
+            date = state
+            if num in watched:
+                ep = watched[num]
+                if ep.end_date != date:
+                    ep.end_date = date
+                    to_update.append(ep)
+            else:
+                self.watch(num, date)
+
+        if to_update:
+            bulk_update_with_history(to_update, Episode, ["end_date"])
+
+    def set_watch_dates(self, start_date, end_date):
+        """Distribute watch dates across watched episodes sorted by number."""
+        eps = self.get_watched_episodes()
+        if not eps:
+            return
+        if end_date is None:
+            for ep in eps:
+                ep.end_date = None
+            bulk_update_with_history(eps, Episode, ["end_date"])
+            return
+        start = start_date or end_date
+        n = len(eps)
+        span = (end_date - start).total_seconds()
+        for i, ep in enumerate(eps):
+            ep.end_date = (
+                start + timezone.timedelta(seconds=span * i / (n - 1))
+                if n > 1
+                else end_date
+            )
+        bulk_update_with_history(eps, Episode, ["end_date"])
 
     def get_tv(self):
         """Get related TV instance for a season and create it if it doesn't exist."""

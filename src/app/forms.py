@@ -334,17 +334,49 @@ class BoardgameForm(MediaForm):
 class TvForm(MediaForm):
     """Form for TV shows."""
 
+    start_date = forms.DateTimeField(required=False)
+    end_date = forms.DateTimeField(required=False)
+
     class Meta(MediaForm.Meta):
         """Bind form to model."""
 
         model = TV
         fields = ["score", "status", "notes"]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        widget = (
+            forms.DateTimeInput(attrs={"type": "datetime-local"})
+            if settings.TRACK_TIME
+            else forms.DateInput(attrs={"type": "date"})
+        )
+        self.fields["start_date"].widget = widget
+        self.fields["end_date"].widget = widget
+        if self.instance.pk:
+            self.fields["start_date"].initial = self.instance.start_date
+            self.fields["end_date"].initial = self.instance.end_date
+
+    def save(self, commit=True):
+        instance = super().save(commit)
+        if commit and instance.pk:
+            instance.set_watch_dates(
+                self.cleaned_data.get("start_date"),
+                self.cleaned_data.get("end_date"),
+            )
+        return instance
+
 
 class SeasonForm(MediaForm):
     """Form for seasons."""
 
     season_number = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+    progress = forms.IntegerField(
+        required=False,
+        min_value=0,
+        label="Progress (episodes)",
+    )
+    start_date = forms.DateTimeField(required=False)
+    end_date = forms.DateTimeField(required=False)
 
     class Meta(MediaForm.Meta):
         """Bind form to model."""
@@ -355,6 +387,37 @@ class SeasonForm(MediaForm):
             "status",
             "notes",
         ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        widget = (
+            forms.DateTimeInput(attrs={"type": "datetime-local"})
+            if settings.TRACK_TIME
+            else forms.DateInput(attrs={"type": "date"})
+        )
+        self.fields["start_date"].widget = widget
+        self.fields["end_date"].widget = widget
+        if self.instance.pk:
+            self.fields["progress"].initial = self.instance.progress
+            self.fields["start_date"].initial = self.instance.start_date
+            self.fields["end_date"].initial = self.instance.end_date
+
+    def save(self, commit=True):
+        instance = super().save(commit)
+        if commit and instance.pk:
+            progress = self.cleaned_data.get("progress")
+            if progress is not None:
+                instance.sync_progress(progress, watched_at=self.cleaned_data.get("end_date"))
+            instance.set_watch_dates(
+                self.cleaned_data.get("start_date"),
+                self.cleaned_data.get("end_date"),
+            )
+            # Re-assert user-chosen status (episode creation may auto-change it)
+            status = self.cleaned_data.get("status")
+            if status and instance.status != status:
+                instance.status = status
+                instance.save()
+        return instance
 
 
 class EpisodeForm(forms.ModelForm):

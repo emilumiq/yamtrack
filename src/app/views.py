@@ -14,7 +14,9 @@ from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonRespo
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_datetime
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
+from simple_history.utils import bulk_update_with_history
 
 from app import config, helpers, history_processor
 from app import home as home_helpers
@@ -548,6 +550,61 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
     return helpers.redirect_back(request)
 
 
+def _parse_date_value(value):
+    """Parse a date/datetime string from an HTML input."""
+    if not value:
+        return None
+    if settings.TRACK_TIME:
+        return parse_datetime(value)
+    return parse_date(value)
+
+
+def _save_nested_seasons(request, tv):
+    """Apply per-season score/progress/dates posted from the TV modal."""
+    prefix = "season_"
+    pks = {
+        key[len(prefix) :].split("_")[0]
+        for key in request.POST
+        if key.startswith(prefix) and key[len(prefix) :].split("_")[0].isdigit()
+    }
+    for pk in pks:
+        try:
+            season = tv.seasons.select_related("item").get(pk=pk)
+        except Season.DoesNotExist:
+            continue
+        pfx = f"season_{pk}_"
+
+        score_raw = request.POST.get(pfx + "score")
+        if score_raw is not None and score_raw != "":
+            season.score = float(score_raw) or None
+            bulk_update_with_history([season], Season, ["score"])
+
+        progress_raw = request.POST.get(pfx + "progress")
+        if progress_raw is not None and progress_raw != "":
+            watched_at = _parse_date_value(request.POST.get(pfx + "end"))
+            season.sync_progress(int(progress_raw), watched_at=watched_at)
+
+        start = _parse_date_value(request.POST.get(pfx + "start"))
+        end = _parse_date_value(request.POST.get(pfx + "end"))
+        if start is not None or end is not None:
+            season.set_watch_dates(start, end)
+
+
+def _save_nested_episodes(request, season):
+    """Apply per-episode watched/date state from the Season modal."""
+    desired = {}
+    for key in list(request.POST.keys()):
+        if key.startswith("episode_watched_"):
+            num = key.rsplit("_", 1)[1]
+            if request.POST.get(key) in ("on", "true", "1"):
+                raw = request.POST.get(f"episode_date_{num}", "")
+                desired[num] = _parse_date_value(raw) if raw else None
+            else:
+                desired[num] = False
+    if desired:
+        season.sync_episode_state(desired)
+
+
 @require_GET
 def track_modal(
     request,
@@ -603,16 +660,49 @@ def track_modal(
 
     form = get_form_class(media_type)(instance=media, initial=initial_data)
 
-    return render(
-        request,
-        "app/components/fill_track.html",
-        {
-            "title": title,
-            "form": form,
-            "media": media,
-            "return_url": request.GET["return_url"],
-        },
-    )
+    ctx = {
+        "title": title,
+        "form": form,
+        "media": media,
+        "return_url": request.GET["return_url"],
+        "track_time": settings.TRACK_TIME,
+    }
+
+    if media:
+        if media_type == MediaTypes.TV.value:
+            seasons_list = list(
+                media.seasons.select_related("item").filter(
+                    item__season_number__gt=0,
+                )
+            )
+            ctx["seasons"] = seasons_list
+        elif media_type == MediaTypes.SEASON.value:
+            try:
+                season_meta = services.get_media_metadata(
+                    MediaTypes.SEASON.value,
+                    media.item.media_id,
+                    media.item.source,
+                    [media.item.season_number],
+                )
+                watched = {
+                    ep.item.episode_number: ep
+                    for ep in media.get_watched_episodes()
+                }
+                episodes_ctx = []
+                for ep_data in season_meta.get("episodes", []):
+                    num = ep_data["episode_number"]
+                    ep_watched = watched.get(num)
+                    episodes_ctx.append({
+                        "number": num,
+                        "title": ep_data.get("title", f"Episode {num}"),
+                        "watched": ep_watched is not None,
+                        "date": ep_watched.end_date if ep_watched else None,
+                    })
+                ctx["episodes"] = episodes_ctx
+            except Exception:
+                logger.debug("Could not load season metadata for modal", exc_info=True)
+
+    return render(request, "app/components/fill_track.html", ctx)
 
 
 @require_POST
@@ -652,6 +742,10 @@ def media_save(request):
     if form.is_valid():
         form.save()
         logger.info("%s saved successfully.", form.instance)
+        if media_type == MediaTypes.TV.value and form.instance.pk:
+            _save_nested_seasons(request, form.instance)
+        elif media_type == MediaTypes.SEASON.value and form.instance.pk:
+            _save_nested_episodes(request, form.instance)
     else:
         logger.error(form.errors.as_json())
         for field, errors in form.errors.items():

@@ -46,6 +46,13 @@
                       {% include "app/icons/chevron-down.svg" with classes="w-3.5 h-3.5" %}
                     </button>
                   </div>
+                {% elif field.field.widget.input_type == 'date' or field.field.widget.input_type == 'datetime' %}
+                  {{ field|add_class:"w-full p-2 pr-8 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
+                  <button type="button" title="Clear date"
+                          class="absolute inset-y-0 right-2 flex items-center text-gray-400 hover:text-white cursor-pointer"
+                          onclick="this.previousElementSibling.value = ''">
+                    {% include "app/icons/x.svg" with classes="w-4 h-4" %}
+                  </button>
                 {% else %}
                   {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
                 {% endif %}
@@ -56,6 +63,88 @@
 
         {% if total_fields > 8 %}</div>{% endif %}
     {% endwith %}
+
+    {% if seasons %}
+      <div class="mb-5 border border-gray-600 rounded-md overflow-hidden" x-data="{open: false}">
+        <button type="button" @click="open = !open"
+                class="w-full flex items-center justify-between px-3 py-2 bg-[#39404b] text-sm text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer">
+          <span>Seasons</span>
+          <span class="text-gray-500" x-text="open ? '▲' : '▼'"></span>
+        </button>
+        <div x-show="open" x-collapse class="p-3 space-y-4">
+          {% for s in seasons %}
+            <div class="border-b border-gray-700 pb-3 last:border-b-0 last:pb-0">
+              <p class="text-sm font-medium text-white mb-2">
+                Season {{ s.item.season_number }}
+              </p>
+              <div class="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <label class="text-gray-400 text-xs">Score</label>
+                  <input type="number" min="0" max="10" step="0.1" placeholder="0-10"
+                         name="season_{{ s.pk }}_score"
+                         value="{{ s.score|default_if_none:'' }}"
+                         class="w-full p-1.5 bg-[#39404b] rounded text-white border border-gray-600 focus:outline-none focus:ring-1 focus:ring-[#4a9eff]" />
+                </div>
+                <div>
+                  <label class="text-gray-400 text-xs">Watched</label>
+                  <input type="number" min="0"
+                         name="season_{{ s.pk }}_progress"
+                         value="{{ s.progress }}"
+                         class="w-full p-1.5 bg-[#39404b] rounded text-white border border-gray-600 focus:outline-none focus:ring-1 focus:ring-[#4a9eff]" />
+                </div>
+                <div class="relative">
+                  <label class="text-gray-400 text-xs">Start</label>
+                  <input type="{% if track_time %}datetime-local{% else %}date{% endif %}"
+                         name="season_{{ s.pk }}_start"
+                         value="{{ s.start_date|date:'Y-m-d\TH:i'|default_if_none:'' }}"
+                         class="w-full p-1.5 pr-6 bg-[#39404b] rounded text-white border border-gray-600 focus:outline-none focus:ring-1 focus:ring-[#4a9eff]" />
+                  <button type="button" title="Clear"
+                          class="absolute top-0 right-1 text-gray-400 hover:text-white cursor-pointer"
+                          onclick="this.previousElementSibling.value = ''">×</button>
+                </div>
+                <div class="relative">
+                  <label class="text-gray-400 text-xs">End</label>
+                  <input type="{% if track_time %}datetime-local{% else %}date{% endif %}"
+                         name="season_{{ s.pk }}_end"
+                         value="{{ s.end_date|date:'Y-m-d\TH:i'|default_if_none:'' }}"
+                         class="w-full p-1.5 pr-6 bg-[#39404b] rounded text-white border border-gray-600 focus:outline-none focus:ring-1 focus:ring-[#4a9eff]" />
+                  <button type="button" title="Clear"
+                          class="absolute top-0 right-1 text-gray-400 hover:text-white cursor-pointer"
+                          onclick="this.previousElementSibling.value = ''">×</button>
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if episodes %}
+      <div class="mb-5 border border-gray-600 rounded-md overflow-hidden" x-data="{open: false}">
+        <button type="button" @click="open = !open"
+                class="w-full flex items-center justify-between px-3 py-2 bg-[#39404b] text-sm text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer">
+          <span>Episodes</span>
+          <span class="text-gray-500" x-text="open ? '▲' : '▼'"></span>
+        </button>
+        <div x-show="open" x-collapse class="p-3 space-y-2 max-h-48 overflow-y-auto">
+          {% for ep in episodes %}
+            <div class="flex items-center gap-2 text-sm py-1 border-b border-gray-700 last:border-b-0"
+                 x-data="{on: {{ ep.watched|yesno:'true,false' }}}">
+              <input type="checkbox"
+                     name="episode_watched_{{ ep.number }}"
+                     x-model.boolean="on"
+                     class="rounded border-gray-500 bg-[#39404b] text-[#4a9eff] focus:ring-[#4a9eff]" />
+              <span class="text-white flex-1">E{{ ep.number }}</span>
+              <input type="{% if track_time %}datetime-local{% else %}date{% endif %}"
+                     name="episode_date_{{ ep.number }}"
+                     value="{{ ep.date|date:'Y-m-d\TH:i'|default_if_none:'' }}"
+                     :disabled="!on"
+                     class="p-1 pr-6 bg-[#39404b] rounded text-white border border-gray-600 focus:outline-none focus:ring-1 focus:ring-[#4a9eff] disabled:opacity-40 w-36" />
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
 
     {% if form.notes %}
       <div class="mb-5">
