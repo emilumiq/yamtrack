@@ -7,8 +7,7 @@ import logging
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
-from django.db.models import F, Max, Q
-from django.db.models.functions import Coalesce
+from django.db.models import Count, F, Max, Q
 from django.http import HttpResponse, JsonResponse
 
 from app.models import MediaTypes
@@ -19,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
-# Map numeric status codes (used by info-page) to Yamtrack status strings.
+# Map numeric status codes (used by info-page watchlist.ts) to Yamtrack
+# status strings.
 STATUS_MAP = {
     "1": "In progress",
     "2": "Completed",
@@ -30,11 +30,10 @@ STATUS_MAP = {
 
 
 def _max_progress_from_metadata(item):
-    """Return the total unit count from provider metadata.
+    """Return total unit count from provider metadata.
 
-    Fallback for sources whose released episodes are not tracked by
-    the events app (e.g. MAL anime), where ``max_progress`` comes from
-    the provider metadata instead.
+    Fallback for sources whose released episodes are not tracked by the
+    events app (e.g. MAL anime).
     """
     try:
         metadata = provider_services.get_media_metadata(
@@ -46,6 +45,27 @@ def _max_progress_from_metadata(item):
         logger.debug("Metadata lookup failed for %s", item, exc_info=True)
         return None
     return metadata.get("max_progress") or None
+
+
+def _batch_event_counts(items):
+    """Return {media_id: released_episode_count} for the given items.
+
+    A single query replaces N individual COUNT queries in the item loop.
+    """
+    media_ids = [m.item.media_id for m in items if m.item]
+    if not media_ids:
+        return {}
+    rows = (
+        Event.objects.filter(
+            item__media_id__in=media_ids,
+            item__media_type=MediaTypes.SEASON.value,
+            item__season_number__gt=0,
+            content_number__isnull=False,
+        )
+        .values("item__media_id")
+        .annotate(cnt=Count("id"))
+    )
+    return {r["item__media_id"]: r["cnt"] for r in rows}
 
 
 def _authenticate(request):
@@ -90,42 +110,38 @@ def media_list(request):
     """Return a paginated list of media items for the authenticated user.
 
     Query parameters:
-        media_type – tv, movie, anime, manga, etc.
-        status     – numeric (1-5) or string status filter
-        limit      – max items to return (default 20, max 100)
-        offset     – number of items to skip
+        media_type -- tv, movie, anime, manga, etc.
+        status     -- numeric (1-5) or string status filter
+        limit      -- max items to return (default 20, max 100)
+        offset     -- number of items to skip
 
-    Response format (compatible with info-page watchlist.ts):
+    Response:
         {
+            "count": 42,
             "results": [
                 {
                     "progress": 5,
                     "progressed_at": "2024-01-01T00:00:00Z",
-                    "item": {
-                        "media_id": "123",
-                        "source": "tmdb",
-                        "media_type": "tv",
-                        "title": "Show Name",
-                        "image": "https://..."
-                    }
+                    "max_progress": 12,
+                    "item": { "media_id": "123", ... }
                 }
             ]
         }
     """
-    # Handle CORS preflight
     if request.method == "OPTIONS":
         return _cors_headers(HttpResponse(status=204))
 
     user = _authenticate(request)
     if user is None:
-        return _cors_headers(JsonResponse({"detail": "Invalid or missing token."}, status=401))
+        return _cors_headers(
+            JsonResponse({"detail": "Invalid or missing token."}, status=401)
+        )
 
     media_type = request.GET.get("media_type", "tv")
     status_raw = request.GET.get("status", "")
     limit = min(int(request.GET.get("limit", 20)), 100)
     offset = max(int(request.GET.get("offset", 0)), 0)
 
-    # Validate media_type
     valid_types = [t[0] for t in MediaTypes.choices]
     if media_type not in valid_types:
         return _cors_headers(JsonResponse(
@@ -133,56 +149,56 @@ def media_list(request):
             status=400,
         ))
 
-    # Build status filter
     status_filter = STATUS_MAP.get(status_raw, status_raw)
     if not status_filter or status_filter.lower() == "all":
         status_q = Q()
     else:
         status_q = Q(status=status_filter)
 
-    # Resolve the correct Django model for this media type
     model = apps.get_model(app_label="app", model_name=media_type)
+    base_qs = model.objects.filter(status_q, user=user).select_related("item")
 
-    # Sort by last activity: the watch date when available, otherwise the
-    # date the entry was added. Entries without any dates must never float
-    # to the top regardless of database NULL ordering.
-    if any(
-        field.attname == "progressed_at" for field in model._meta.concrete_fields
-    ):
-        activity = Coalesce("progressed_at", "created_at")
-    elif media_type == MediaTypes.TV.value:
-        # TV/Season have no progressed_at column, derive it from episodes
-        activity = Coalesce(Max("seasons__episodes__end_date"), "created_at")
-    else:
-        activity = Coalesce(Max("episodes__end_date"), "created_at")
-
-    queryset = (
-        model.objects.filter(status_q, user=user)
-        .select_related("item")
-        .annotate(_activity=activity)
-        .order_by(F("_activity").desc(), "-created_at")
+    # --- Ordering: watch-date first, undated items strictly at the bottom ---
+    # For models with a progressed_at column (Movie, Anime, ...): order by
+    # that field descending with nulls_last so entries without a watch date
+    # always sort below every dated entry.
+    # For TV / Season (no column): derive from the latest watched episode
+    # end_date using an annotation.
+    has_date_col = any(
+        f.attname == "progressed_at" for f in model._meta.concrete_fields
     )
+    if has_date_col:
+        queryset = base_qs.order_by(
+            F("progressed_at").desc(nulls_last=True),
+            "-created_at",
+        )
+    elif media_type == MediaTypes.TV.value:
+        queryset = (
+            base_qs
+            .annotate(_last_watched=Max("seasons__episodes__end_date"))
+            .order_by(F("_last_watched").desc(nulls_last=True), "-created_at")
+        )
+    else:
+        queryset = (
+            base_qs
+            .annotate(_last_watched=Max("episodes__end_date"))
+            .order_by(F("_last_watched").desc(nulls_last=True), "-created_at")
+        )
 
-    items = queryset[offset : offset + limit]
+    total = base_qs.count()
+    items = list(queryset[offset : offset + limit])
+
+    # --- Batch event counts (one query, not N) ---
+    event_counts = _batch_event_counts(items) if items else {}
+
     results = []
     for media in items:
-        # Calculate max_progress (total episodes / items)
         max_progress = None
         if media_type == MediaTypes.MOVIE.value:
             max_progress = 1
         elif media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-            # Prefer released-episode counts from Events, fall back to
-            # provider metadata (e.g. MAL num_episodes) when unavailable
-            max_progress = (
-                Event.objects.filter(
-                    item__media_id=media.item.media_id,
-                    item__source=media.item.source,
-                    item__media_type=MediaTypes.SEASON.value,
-                    item__season_number__gt=0,
-                    content_number__isnull=False,
-                ).count()
-                or _max_progress_from_metadata(media.item)
-            )
+            ec = event_counts.get(media.item.media_id, 0)
+            max_progress = ec or _max_progress_from_metadata(media.item) or None
 
         results.append(
             {
@@ -193,7 +209,9 @@ def media_list(request):
                 "progress": media.progress,
                 "max_progress": max_progress,
                 "progressed_at": (
-                    media.progressed_at.isoformat() if hasattr(media, 'progressed_at') and media.progressed_at else None
+                    media.progressed_at.isoformat()
+                    if hasattr(media, "progressed_at") and media.progressed_at
+                    else None
                 ),
                 "item": {
                     "media_id": media.item.media_id,
@@ -205,7 +223,7 @@ def media_list(request):
             }
         )
 
-    return _cors_headers(JsonResponse({"results": results}))
+    return _cors_headers(JsonResponse({"count": total, "results": results}))
 
 
 # Exempt from LoginRequiredMiddleware (token auth handled inside the view)
