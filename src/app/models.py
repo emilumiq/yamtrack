@@ -2007,6 +2007,23 @@ class Movie(Media):
 
     tracker = FieldTracker()
 
+    def save(self, *args, **kwargs):
+        """Save the movie instance.
+
+        Movies don't use progressed_at — their watch date is end_date which
+        the user sets explicitly.  We still call process_progress/status but
+        intentionally skip the progressed_at stamp.
+        """
+        if self.tracker.has_changed("progress"):
+            self.process_progress()
+
+        if self.tracker.has_changed("status"):
+            self.process_status()
+
+        # Call grandparent save directly, bypassing Media.save's progressed_at
+        # logic, to keep models.Model.save signature intact.
+        super(Media, self).save(*args, **kwargs)
+
 
 class Game(Media):
     """Model for games."""

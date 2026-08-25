@@ -21,11 +21,17 @@ MEDIA_MODELS = [
     ("comic",      "historicalcomic"),
     ("game",       "historicalgame"),
     ("manga",      "historicalmanga"),
-    ("movie",      "historicalmovie"),
+    # movies excluded: their watch date is end_date, not progressed_at
 ]
 
 
 def restore_progressed_at(apps, schema_editor):
+    # Clear progressed_at on movies — their watch date is end_date.
+    # progressed_at on movies is an internal progress stamp that shouldn't
+    # be exposed as a "watched on" date.
+    Movie = apps.get_model("app", "movie")
+    Movie.objects.update(progressed_at=None)
+
     for model_name, hist_name in MEDIA_MODELS:
         Model = apps.get_model("app", model_name)
         Hist  = apps.get_model("app", hist_name)

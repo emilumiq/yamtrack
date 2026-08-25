@@ -110,15 +110,22 @@ def _cors_headers(response):
 def _get_progressed_at(media):
     """Return the relevant watch date for a media instance.
 
+    Movies: use end_date (set explicitly by the user or when marking Completed).
+      progressed_at on movies reflects internal progress stamps and is not
+      meaningful as a "watched on" date.
     TV/Season: progressed_at is a @property computed from episode dates.
-    Anime/Movie: use the MonitorField progressed_at which auto-updates
-    whenever progress changes (i.e. on each episode watched).
+    Anime and other episodic types: use progressed_at which is updated on
+      every progress change.
 
     The value is localized to the active timezone so it matches the date
     shown in Yamtrack's activity history (which also renders in local time)
     instead of being serialized as raw UTC.
     """
-    value = media.progressed_at
+    from app.models import Movie
+    if isinstance(media, Movie):
+        value = media.end_date
+    else:
+        value = media.progressed_at
     if value is not None and timezone.is_aware(value):
         return timezone.localtime(value)
     return value
