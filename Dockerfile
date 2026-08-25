@@ -36,6 +36,7 @@ ENV PATH="/yamtrack/.venv/bin:$PATH"
 WORKDIR /yamtrack
 
 COPY ./entrypoint.sh /entrypoint.sh
+COPY ./supervisord.conf /etc/supervisord.conf
 
 RUN apk add --no-cache shadow \
     && chmod +x /entrypoint.sh \
