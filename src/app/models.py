@@ -874,6 +874,7 @@ class Media(models.Model):
         """Save the media instance."""
         if self.tracker.has_changed("progress"):
             self.process_progress()
+            self.progressed_at = timezone.now()
 
         if self.tracker.has_changed("status"):
             self.process_status()
@@ -947,12 +948,14 @@ class Media(models.Model):
     def increase_progress(self):
         """Increase the progress of the media by one."""
         self.progress += 1
+        self.progressed_at = timezone.now()
         self.save()
         logger.info("Incresed progress of %s to %s", self, self.progress)
 
     def decrease_progress(self):
         """Decrease the progress of the media by one."""
         self.progress -= 1
+        self.progressed_at = timezone.now()
         self.save()
         logger.info("Decreased progress of %s to %s", self, self.progress)
 

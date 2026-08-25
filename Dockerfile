@@ -30,24 +30,17 @@ ENV PYTHONUNBUFFERED=1
 ARG VERSION=dev
 # Set it as an environment variable
 ENV VERSION=$VERSION
-# Put the virtualenv on PATH so python/gunicorn/celery/supervisord resolve directly
+# Put the virtualenv on PATH so python/gunicorn/celery resolve directly
 ENV PATH="/yamtrack/.venv/bin:$PATH"
 
 WORKDIR /yamtrack
 
 COPY ./entrypoint.sh /entrypoint.sh
-COPY ./supervisord.conf /etc/supervisord.conf
-COPY ./nginx.conf /etc/nginx/nginx.conf
-# Generate a copy of the nginx config with IPv6 support.
-RUN sed 's/listen 8000;/listen 8000; listen [::]:8000;/' /etc/nginx/nginx.conf > /etc/nginx/nginx.ipv6.conf
 
-RUN apk add --no-cache nginx shadow \
+RUN apk add --no-cache shadow \
     && chmod +x /entrypoint.sh \
     # create user abc for later PUID/PGID mapping
-    && useradd -U -M -s /bin/sh abc \
-    # Create required nginx directories and set permissions
-    && mkdir -p /var/log/nginx \
-    && mkdir -p /var/lib/nginx/body
+    && useradd -U -M -s /bin/sh abc
 
 # Copy the pre-built virtualenv from the builder stage
 COPY --from=builder /yamtrack/.venv /yamtrack/.venv
@@ -60,5 +53,5 @@ EXPOSE 8000
 
 CMD ["/entrypoint.sh"]
 
-HEALTHCHECK --interval=45s --timeout=15s --start-period=30s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8000/health/ || exit 1
