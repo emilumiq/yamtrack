@@ -872,8 +872,14 @@ class Media(models.Model):
 
     def save(self, *args, **kwargs):
         """Save the media instance."""
-        if self.tracker.has_changed("progress"):
+        progress_changed = self.tracker.has_changed("progress")
+
+        if progress_changed:
             self.process_progress()
+            # Always stamp progressed_at when progress actually changes so the
+            # API and home-page sorting reflect the most-recent watch date.
+            # (Previously a MonitorField handled this automatically; after the
+            # switch to a plain DateTimeField we must do it explicitly here.)
             self.progressed_at = timezone.now()
 
         if self.tracker.has_changed("status"):
