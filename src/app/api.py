@@ -9,6 +9,7 @@ from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.db.models import Count, F, Max, Q
 from django.http import HttpResponse, JsonResponse
+from django.utils import timezone
 
 from app.models import MediaTypes
 from app.providers import services as provider_services
@@ -112,11 +113,15 @@ def _get_progressed_at(media):
     TV/Season: progressed_at is a @property computed from episode dates.
     Anime/Movie: use the MonitorField progressed_at which auto-updates
     whenever progress changes (i.e. on each episode watched).
+
+    The value is localized to the active timezone so it matches the date
+    shown in Yamtrack's activity history (which also renders in local time)
+    instead of being serialized as raw UTC.
     """
-    concrete = {f.name for f in media._meta.concrete_fields}
-    if "progressed_at" not in concrete:
-        return media.progressed_at
-    return media.progressed_at
+    value = media.progressed_at
+    if value is not None and timezone.is_aware(value):
+        return timezone.localtime(value)
+    return value
 
 
 def media_list(request):
