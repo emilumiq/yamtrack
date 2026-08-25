@@ -110,13 +110,13 @@ def _get_progressed_at(media):
     """Return the relevant watch date for a media instance.
 
     TV/Season: progressed_at is a @property computed from episode dates.
-    Movie/Anime/etc: use the user-entered end_date (or start_date) instead
-    of the stale MonitorField progressed_at value.
+    Anime/Movie: use the MonitorField progressed_at which auto-updates
+    whenever progress changes (i.e. on each episode watched).
     """
     concrete = {f.name for f in media._meta.concrete_fields}
     if "progressed_at" not in concrete:
         return media.progressed_at
-    return getattr(media, "end_date", None) or getattr(media, "start_date", None)
+    return media.progressed_at
 
 
 def media_list(request):
