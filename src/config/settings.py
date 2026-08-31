@@ -594,7 +594,7 @@ CELERY_BEAT_SCHEDULE = {
 
 IS_PROD = not any(cmd in sys.argv for cmd in ("runserver", "test"))
 if IS_PROD:
-    ALLAUTH_TRUSTED_CLIENT_IP_HEADER = "X-Real-IP"
+    ALLAUTH_TRUSTED_CLIENT_IP_HEADER = "X-Forwarded-For"
 if CSRF_TRUSTED_ORIGINS:
     # Check if all origins start with http:// or https://
     all_http = all(
